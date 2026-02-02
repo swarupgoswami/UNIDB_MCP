@@ -1,3 +1,13 @@
+if (process.env.NODE_ENV !== 'development') { // Only silence in production (Claude Desktop)
+  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (data: string | Uint8Array, ...args: any[]) => {
+      if (!data.toString().includes('{"jsonrpc"')) { // Only filter non-JSON text
+          console.error("STDOUT INTERFERENCE:", data.toString().trim()); 
+      }
+      return originalStdoutWrite(data, ...args);
+  };
+}
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -9,21 +19,31 @@ import {
 
 import { MongoClient } from "mongodb";
 import { Client } from "pg";
-import dotenv from "dotenv";
 import { connectSqlite } from "./sqliteClient.js";
 
+
+import dotenv from "dotenv";
 if (!process.env.MONGODB_URI) {
   dotenv.config();
 }
 
-// mongodb env's
 const uri = process.env.MONGODB_URI!;
 const dbname = process.env.MONGODB_DB!;
 const collectionName = process.env.MONGODB_COLLECTION!;
-const client = new MongoClient(uri);
-await client.connect();
-const db = client.db(dbname);
-const collection = db.collection(collectionName);
+
+const mongoClient = new MongoClient(uri);
+let mongoDb: any;
+let collection: any;
+
+
+// mongodb env's
+// const uri = process.env.MONGODB_URI!;
+// const dbname = process.env.MONGODB_DB!;
+// const collectionName = process.env.MONGODB_COLLECTION!;
+// const client = new MongoClient(uri);
+// await client.connect();
+// const db = client.db(dbname);
+// const collection = db.collection(collectionName);
 
 // postgres pg client
 
@@ -35,14 +55,59 @@ const pgClient = new Client({
   port: 5432,
 });
 
-pgClient
-  .connect()
-  .then(() => {
-    console.error("connected to thye postgres databse");
-  })
-  .catch((err: unknown) => {
-    console.error("posgtres databse not connected", err);
-  });
+let pgConnected = false;
+
+
+function ensureMongoReady() {
+  if (!collection) {
+    throw new McpError(
+      ErrorCode.InternalError,
+      "MongoDB not initialized yet"
+    );
+  }
+}
+
+
+async function initializeDatabases() {
+  // MongoDB
+  try {
+    await mongoClient.connect();
+    mongoDb = mongoClient.db(dbname);
+    collection = mongoDb.collection(collectionName);
+    console.error("✅ MongoDB connected");
+  } catch (e) {
+    console.error("❌ MongoDB failed", e);
+  }
+
+  // PostgreSQL
+  try {
+    if (!pgConnected) {
+      await pgClient.connect();
+      pgConnected = true;
+      console.error("✅ PostgreSQL connected");
+    }
+  } catch (e) {
+    console.error("❌ PostgreSQL failed", e);
+  }
+
+  // SQLite
+  try {
+    connectSqlite();
+    console.error("✅ SQLite connected");
+  } catch (e) {
+    console.error("❌ SQLite failed", e);
+  }
+}
+
+
+// pgClient
+//   .connect()
+//   .then(() => {
+//     console.error("connected to thye postgres databse");
+//   })
+//   .catch((err: unknown) => {
+//     console.error("posgtres databse not connected", err);
+//   });
 
 const server = new Server(
   {
@@ -285,6 +350,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
           },
           required: ["tableName", "updates", "filter"],
+        },
+      },
+      {
+        name: "delete_row_sqlite",
+        description: "Delete rows from a SQLite table using a filter",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tableName: {
+              type: "string",
+              description: "Name of the SQLite table",
+            },
+            filter: {
+              type: "object",
+              description: "Filter to select rows, e.g. { id: 1 }",
+            },
+          },
+          required: ["tableName", "filter"],
         },
       },
     ],
@@ -758,9 +841,69 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       );
     }
   }
+  if (name === "delete_row_sqlite") {
+    const { tableName, filter } = args as {
+      tableName: string;
+      filter: Record<string, any>;
+    };
+
+    if (!tableName || !filter || Object.keys(filter).length === 0) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        "Missing tableName or filter for delete_row_sqlite"
+      );
+    }
+
+    try {
+      const db = connectSqlite();
+
+      const filterKeys = Object.keys(filter);
+      const filterValues = Object.values(filter);
+
+      const whereClause = filterKeys.map((key) => `"${key}" = ?`).join(" AND ");
+      const sql = `DELETE FROM "${tableName.replace(
+        /"/g,
+        '""'
+      )}" WHERE ${whereClause};`;
+
+      const stmt = db.prepare(sql);
+      const result = stmt.run(...filterValues);
+
+      return {
+        toolResult: {
+          success: true,
+          message: `rows deleted from ${tableName}`,
+          changes: result.changes,
+        },
+      };
+    } catch (err: any) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `sqlite delete row failed: ${err.message}`
+      );
+    }
+  }
 
   throw new McpError(ErrorCode.InvalidRequest, "tool not found");
 });
 
+// const transport = new StdioServerTransport();
+// await server.connect(transport);
 const transport = new StdioServerTransport();
-await server.connect(transport);
+// await server.connect(transport);
+// console.error("🚀 MCP server connected");
+
+// initializeDatabases().catch(err => {
+//   console.error("🔥 Database init failed", err);
+//   process.exit(1);
+// });
+server.connect(transport)
+  .then(() => {
+    console.error("🚀 MCP server connected");
+    initializeDatabases(); // Run this without 'await' in the main thread
+  })
+  .catch(err => {
+    console.error("🔥 Server connection failed", err);
+    process.exit(1); // Exit if connection fails
+  });
+

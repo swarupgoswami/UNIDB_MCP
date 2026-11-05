@@ -18,13 +18,35 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { MongoClient } from "mongodb";
-import { Client } from "pg";
+// import { Client } from "pg";
+import { Pool } from "pg";
 import { connectSqlite } from "./sqliteClient.js";
+import path from "path";
+import { fileURLToPath } from "url";
 
 
 import dotenv from "dotenv";
-if (!process.env.MONGODB_URI) {
-  dotenv.config();
+// if (!process.env.MONGODB_URI) {
+//   dotenv.config();
+// }
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+dotenv.config({ path: path.join(projectRoot, ".env") });
+
+if (!process.env.PG_PASSWORD) {
+  console.error("⚠️ PG_PASSWORD is not set (check your .env or config env block)");
+}
+
+function ok(data: unknown) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+  };
+}
+
+function fail(message: string) {
+  return {
+    content: [{ type: "text" as const, text: message }],
+    isError: true,
+  };
 }
 
 const uri = process.env.MONGODB_URI!;
@@ -47,12 +69,35 @@ let collection: any;
 
 // postgres pg client
 
-const pgClient = new Client({
-  user: "postgres",
-  host: "localhost",
-  database: "mydb",
-  password: "swago123@",
-  port: 5432,
+// const pgClient = new Client({
+//   user: "postgres",
+//   host: "localhost",
+//   database: "mydb",
+//   password: "password",
+//   port: 5432,
+// });
+
+// const pgClient = new Client({
+//   user: process.env.PG_USER || "postgres",
+//   host: process.env.PG_HOST || "localhost",
+//   database: process.env.PG_DATABASE || "mydb",
+//   password: process.env.PG_PASSWORD,
+//   port: Number(process.env.PG_PORT) || 5432,
+// });
+
+const pgClient = new Pool({
+  user: process.env.PG_USER || "postgres",
+  host: process.env.PG_HOST || "localhost",
+  database: process.env.PG_DATABASE || "mydb",
+  password: process.env.PG_PASSWORD,
+  port: Number(process.env.PG_PORT) || 5432,
+  max: 5,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+});
+
+pgClient.on("error", (err) => {
+  console.error("PostgreSQL pool error:", err.message);
 });
 
 let pgConnected = false;
@@ -82,7 +127,7 @@ async function initializeDatabases() {
   // PostgreSQL
   try {
     if (!pgConnected) {
-      await pgClient.connect();
+      await pgClient.query("SELECT 1");
       pgConnected = true;
       console.error("✅ PostgreSQL connected");
     }
@@ -374,7 +419,546 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+// server.setRequestHandler(CallToolRequestSchema, async (request) => {
+//   const { name, arguments: args } = request.params;
+
+//   if (name === "create_document") {
+//     if (!args || typeof args !== "object" || !("doc" in args)) {
+//       throw new McpError(
+//         ErrorCode.InvalidRequest,
+//         "Missing or invalid arguments for create_document"
+//       );
+//     }
+
+//     const { doc } = args as { doc: Record<string, any> };
+
+//     try {
+//       const result = await collection.insertOne(doc as Record<string, any>);
+//       return {
+//         toolResult: { insertedId: result.insertedId.toString() },
+//       };
+//     } catch (error) {
+//       throw new McpError(ErrorCode.InternalError, "mongo db insert failed");
+//     }
+//   }
+
+//   if (name === "read_document") {
+//     if (!args || typeof args !== "object") {
+//       throw new McpError(
+//         ErrorCode.InvalidRequest,
+//         "invalid arguments for read_document"
+//       );
+//     }
+
+//     const { filter } = args as { filter?: Record<string, any> };
+
+//     try {
+//       const docs = await collection.find(filter || {}).toArray();
+
+//       //  console.error("Read result:", docs);
+
+//       return {
+//         content: [
+//           {
+//             type: "text",
+//             text: JSON.stringify(docs, null, 2),
+//           },
+//         ],
+//       };
+//     } catch (error) {
+//       throw new McpError(ErrorCode.InternalError, "mongodb read failed");
+//     }
+//   }
+
+//   if (name === "update_document") {
+//     if (
+//       !args ||
+//       typeof args != "object" ||
+//       !("filter" in args) ||
+//       !("update" in args)
+//     ) {
+//       throw new McpError(
+//         ErrorCode.InvalidRequest,
+//         "Missing or invalid arguments for update_document"
+//       );
+//     }
+
+//     const { filter, update } = args as {
+//       filter: Record<string, any>;
+//       update: Record<string, any>;
+//     };
+
+//     try {
+//       const result = await collection.updateMany(filter, update);
+
+//       return {
+//         toolResult: {
+//           matchedCount: result.matchedCount,
+//           modifiedCount: result.modifiedCount,
+//         },
+//       };
+//     } catch (error) {
+//       throw new McpError(ErrorCode.InternalError, "mongodb update failed");
+//     }
+//   }
+
+//   if (name === "delete_document") {
+//     if (!args || typeof args !== "object" || !("filter" in args)) {
+//       throw new McpError(
+//         ErrorCode.InvalidRequest,
+//         "Missing or invalid arguments for delete_document"
+//       );
+//     }
+
+//     const { filter } = args as { filter: Record<string, any> };
+
+//     try {
+//       const result = await collection.deleteMany(filter);
+
+//       return {
+//         toolResult: {
+//           deletedCount: result.deletedCount,
+//         },
+//       };
+//     } catch (error) {
+//       throw new McpError(ErrorCode.InternalError, "mongodb delte failed");
+//     }
+//   }
+
+//   if (name === "create_table") {
+//     // cast args as any object, same as other tools
+//     const { tableName, columns } = args as {
+//       tableName: string;
+//       columns: string[];
+//     };
+
+//     if (!tableName || !tableName.trim()) {
+//       throw new McpError(
+//         ErrorCode.InvalidRequest,
+//         "Table name cannot be empty or whitespace"
+//       );
+//     }
+
+//     if (!Array.isArray(columns) || columns.length === 0) {
+//       throw new McpError(
+//         ErrorCode.InvalidRequest,
+//         "Columns must be a non-empty array of strings"
+//       );
+//     }
+
+//     const safeTableName = `"${tableName.trim().replace(/"/g, '""')}"`;
+
+//     try {
+//       const query = `CREATE TABLE ${safeTableName} (${columns.join(", ")});`;
+//       await pgClient.query(query);
+
+//       // return {
+//       //   toolResult: {
+//       //     success: true,
+//       //     message: `Table '${tableName}' created successfully`,
+//       //   },
+//       // };
+
+//       return ok({
+//         success: true,
+//         message: `Table '${tableName}' created successfully`,
+//       });
+//     } catch (err: any) {
+//       throw new McpError(
+//         ErrorCode.InternalError,
+//         `Postgres table creation failed: ${err.message}`
+//       );
+//     }
+//   }
+//   if (name === "insert_row") {
+//     if (
+//       !args ||
+//       typeof args !== "object" ||
+//       !("tableName" in args) ||
+//       !("columns" in args) ||
+//       !("values" in args)
+//     ) {
+//       throw new McpError(
+//         ErrorCode.InvalidRequest,
+//         "missing or inavalid arguments for insert_row"
+//       );
+//     }
+//     const { tableName, columns, values } = args as {
+//       tableName: string;
+//       columns: string[];
+//       values: any[];
+//     };
+
+//     try {
+//       const safeTableName = `"${tableName.trim().replace(/"/g, '""')}"`;
+//       const query = `INSERT INTO ${safeTableName} (${columns.join(
+//         ", "
+//       )}) VALUES (${columns
+//         .map((_, i) => `$${i + 1}`)
+//         .join(", ")}) RETURNING *;`;
+//       const result = await pgClient.query(query, values);
+
+//       return {
+//         toolResult: {
+//           success: true,
+//           insertedRow: result.rows[0],
+//         },
+//       };
+//     } catch (err: any) {
+//       throw new McpError(
+//         ErrorCode.InternalError,
+//         `Postgres row insertion failed: ${err.message}`
+//       );
+//     }
+//   }
+//   if (name === "read_rows") {
+//     if (!args || typeof args !== "object" || !("tableName" in args)) {
+//       throw new McpError(
+//         ErrorCode.InvalidRequest,
+//         "missing or invalid arguments for read_rows"
+//       );
+//     }
+
+//     const { tableName, filter } = args as {
+//       tableName: string;
+//       filter?: Record<string, any>;
+//     };
+
+//     try {
+//       const safeTableName = `"${tableName.trim().replace(/"/g, '""')}"`;
+//       let query = `SELECT * FROM ${safeTableName}`;
+//       let values: any[] = [];
+
+//       if (
+//         filter &&
+//         typeof filter === "object" &&
+//         Object.keys(filter).length > 0
+//       ) {
+//         const conditions = Object.keys(filter)
+//           .map((key, i) => `"${key}" = $${i + 1}`)
+//           .join(" AND ");
+
+//         query += ` WHERE ${conditions}`;
+//         values = Object.values(filter);
+//       }
+
+//       const result = await pgClient.query(query, values);
+
+//       return {
+//         content: [
+//           {
+//             type: "text",
+//             text: JSON.stringify(result.rows, null, 2),
+//           },
+//         ],
+//       };
+//     } catch (err: any) {
+//       throw new McpError(
+//         ErrorCode.InternalError,
+//         `Postgres read rows failed: ${err.message}`
+//       );
+//     }
+//   }
+//   if (name === "update_row") {
+//     if (
+//       !args ||
+//       typeof args !== "object" ||
+//       !("tableName" in args) ||
+//       !("updates" in args) ||
+//       !("filter" in args)
+//     ) {
+//       throw new McpError(
+//         ErrorCode.InvalidRequest,
+//         "missing or invalid arguments for update_row"
+//       );
+//     }
+
+//     const { tableName, updates, filter } = args as {
+//       tableName: string;
+//       updates: Record<string, any>;
+//       filter: Record<string, any>;
+//     };
+
+//     try {
+//       const safeTableName = `"${tableName.trim().replace(/"/g, '""')}"`;
+
+//       const updateKeys = Object.keys(updates);
+//       const updateValues = Object.values(updates);
+
+//       const filterKeys = Object.keys(filter);
+//       const filterValues = Object.values(filter);
+
+//       const setClause = updateKeys
+//         .map((key, i) => `"${key}" = $${i + 1}`)
+//         .join(", ");
+//       const whereClause = filterKeys
+//         .map((key, i) => `"${key}" = $${updateKeys.length + i + 1}`)
+//         .join(" AND ");
+
+//       const query = `UPDATE ${safeTableName} SET ${setClause} WHERE ${whereClause} RETURNING *;`;
+
+//       const result = await pgClient.query(query, [
+//         ...updateValues,
+//         ...filterValues,
+//       ]);
+
+//       return {
+//         content: [
+//           {
+//             type: "text",
+//             text: JSON.stringify(result.rows, null, 2),
+//           },
+//         ],
+//       };
+//     } catch (err: any) {
+//       throw new McpError(
+//         ErrorCode.InternalError,
+//         `Postgres update row failed: ${err.message}`
+//       );
+//     }
+//   }
+//   if (name === "delete_row") {
+//     if (
+//       !args ||
+//       typeof args !== "object" ||
+//       !("tableName" in args) ||
+//       !("filter" in args)
+//     ) {
+//       throw new McpError(
+//         ErrorCode.InvalidRequest,
+//         "missing or invalid arguments for delete_row"
+//       );
+//     }
+
+//     const { tableName, filter } = args as {
+//       tableName: string;
+//       filter: Record<string, any>;
+//     };
+
+//     try {
+//       const safeTableName = `"${tableName.trim().replace(/"/g, '""')}"`;
+
+//       const filterKeys = Object.keys(filter);
+//       const filterValues = Object.values(filter);
+
+//       if (filterKeys.length === 0) {
+//         throw new McpError(
+//           ErrorCode.InvalidRequest,
+//           "Filter cannot be empty for delete_row"
+//         );
+//       }
+
+//       const whereClause = filterKeys
+//         .map((key, i) => `"${key}" = $${i + 1}`)
+//         .join(" AND ");
+//       const query = `DELETE FROM ${safeTableName} WHERE ${whereClause} RETURNING *;`;
+
+//       const result = await pgClient.query(query, filterValues);
+
+//       return {
+//         content: [
+//           {
+//             type: "text",
+//             text: JSON.stringify(result.rows, null, 2),
+//           },
+//         ],
+//       };
+//     } catch (err: any) {
+//       throw new McpError(
+//         ErrorCode.InternalError,
+//         `Postgres delete row failed: ${err.message}`
+//       );
+//     }
+//   }
+//   if (name === "create_table_sqlite") {
+//     const { tableName, columns } = args as {
+//       tableName: string;
+//       columns: string[];
+//     };
+
+//     if (!tableName || !columns?.length) {
+//       throw new McpError(
+//         ErrorCode.InvalidRequest,
+//         "missing tablename or columns for create_table_SQLite"
+//       );
+//     }
+
+//     try {
+//       const db = connectSqlite();
+//       const safeTableName = `"${tableName.replace(/"/g, '""')}"`;
+
+//       const sql = `CREATE TABLE ${safeTableName} (${columns.join(", ")});`;
+
+//       db.prepare(sql).run();
+
+//       return {
+//         toolResult: {
+//           success: true,
+//           message: `SQLite table ${tableName} created successfully `,
+//         },
+//       };
+//     } catch (err: any) {
+//       throw new McpError(
+//         ErrorCode.InternalError,
+//         `sqlite table creation failed: ${err.message}`
+//       );
+//     }
+//   }
+//   if (name === "insert_row_sqlite") {
+//     const { tableName, row } = args as {
+//       tableName: string;
+//       row: Record<string, any>;
+//     };
+
+//     if (!tableName || !row || Object.keys(row).length === 0) {
+//       throw new McpError(
+//         ErrorCode.InvalidRequest,
+//         "missing tableName or row data for insert_row_sqlite"
+//       );
+//     }
+
+//     try {
+//       const db = connectSqlite();
+//       const columns = Object.keys(row);
+//       const placeholders = columns.map(() => "?").join(", ");
+//       const sql = `INSERT INTO "${tableName.replace(
+//         /"/g,
+//         '""'
+//       )}"(${columns.join(", ")}) VALUES (${placeholders});`;
+
+//       const stmt = db.prepare(sql);
+//       const result = stmt.run(...Object.values(row));
+
+//       return {
+//         toolResult: {
+//           success: true,
+//           message: `row inserted into ${tableName}`,
+//           changes: result.changes,
+//           lastInsertRowid: result.lastInsertRowid,
+//         },
+//       };
+//     } catch (err: any) {
+//       throw new McpError(
+//         ErrorCode.InternalError,
+//         `sqlite row insertion failed: ${err.message}`
+//       );
+//     }
+//   }
+//   if (name === "update_row_sqlite") {
+//     const { tableName, updates, filter } = args as {
+//       tableName: string;
+//       updates: Record<string, any>;
+//       filter: Record<string, any>;
+//     };
+
+//     if (!tableName || !updates || !filter) {
+//       throw new McpError(
+//         ErrorCode.InvalidRequest,
+//         "missing tableName, updates or filter for update_row_sqlite"
+//       );
+//     }
+
+//     try {
+//       const db = connectSqlite();
+
+//       const updateKeys = Object.keys(updates);
+//       const updateValues = Object.values(updates);
+
+//       const filterKeys = Object.keys(filter);
+//       const filterValues = Object.values(filter);
+
+//       const setClause = updateKeys.map((key) => `"${key}" = ?`).join(", ");
+//       const whereClause = filterKeys.map((key) => `"${key}" = ?`).join(" AND ");
+
+//       const sql = `UPDATE "${tableName.replace(
+//         /"/g,
+//         '""'
+//       )}" SET ${setClause} WHERE ${whereClause};`;
+//       const stmt = db.prepare(sql);
+//       const result = stmt.run(...updateValues, ...filterValues);
+
+//       return {
+//         toolResult: {
+//           success: true,
+//           message: `rows updated in ${tableName}`,
+//           changes: result.changes,
+//         },
+//       };
+//     } catch (err: any) {
+//       throw new McpError(
+//         ErrorCode.InternalError,
+//         `sqlite update row failed: ${err.message}`
+//       );
+//     }
+//   }
+//   if (name === "delete_row_sqlite") {
+//     const { tableName, filter } = args as {
+//       tableName: string;
+//       filter: Record<string, any>;
+//     };
+
+//     if (!tableName || !filter || Object.keys(filter).length === 0) {
+//       throw new McpError(
+//         ErrorCode.InvalidRequest,
+//         "Missing tableName or filter for delete_row_sqlite"
+//       );
+//     }
+
+//     try {
+//       const db = connectSqlite();
+
+//       const filterKeys = Object.keys(filter);
+//       const filterValues = Object.values(filter);
+
+//       const whereClause = filterKeys.map((key) => `"${key}" = ?`).join(" AND ");
+//       const sql = `DELETE FROM "${tableName.replace(
+//         /"/g,
+//         '""'
+//       )}" WHERE ${whereClause};`;
+
+//       const stmt = db.prepare(sql);
+//       const result = stmt.run(...filterValues);
+
+//       return {
+//         toolResult: {
+//           success: true,
+//           message: `rows deleted from ${tableName}`,
+//           changes: result.changes,
+//         },
+//       };
+//     } catch (err: any) {
+//       throw new McpError(
+//         ErrorCode.InternalError,
+//         `sqlite delete row failed: ${err.message}`
+//       );
+//     }
+//   }
+
+//   throw new McpError(ErrorCode.InvalidRequest, "tool not found");
+// });
+
+// // const transport = new StdioServerTransport();
+// // await server.connect(transport);
+// const transport = new StdioServerTransport();
+// // await server.connect(transport);
+// // console.error("🚀 MCP server connected");
+
+// // initializeDatabases().catch(err => {
+// //   console.error("🔥 Database init failed", err);
+// //   process.exit(1);
+// // });
+// server.connect(transport)
+//   .then(() => {
+//     console.error("🚀 MCP server connected");
+//     initializeDatabases(); // Run this without 'await' in the main thread
+//   })
+//   .catch(err => {
+//     console.error("🔥 Server connection failed", err);
+//     process.exit(1); // Exit if connection fails
+//   });
+
+
+async function handleToolCall(request: any): Promise<any> {
   const { name, arguments: args } = request.params;
 
   if (name === "create_document") {
@@ -507,12 +1091,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const query = `CREATE TABLE ${safeTableName} (${columns.join(", ")});`;
       await pgClient.query(query);
 
-      return {
-        toolResult: {
-          success: true,
-          message: `Table '${tableName}' created successfully`,
-        },
-      };
+      return ok({
+        success: true,
+        message: `Table '${tableName}' created successfully`,
+      });
     } catch (err: any) {
       throw new McpError(
         ErrorCode.InternalError,
@@ -885,6 +1467,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   throw new McpError(ErrorCode.InvalidRequest, "tool not found");
+}
+
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  try {
+    return await handleToolCall(request);
+  } catch (err: any) {
+    console.error("Tool error:", err);
+    return fail(err?.message ?? String(err));
+  }
 });
 
 // const transport = new StdioServerTransport();
@@ -907,3 +1498,4 @@ server.connect(transport)
     process.exit(1); // Exit if connection fails
   });
 
+ 
